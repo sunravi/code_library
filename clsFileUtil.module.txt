@@ -1,0 +1,328 @@
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = True
+Option Compare Database
+Option Explicit
+'-----
+Dim comp_name As String
+Dim dbs As Database
+
+'----
+
+Dim g_array(1)              As String
+Dim summary_sheet_name      As String
+Dim duplicate_sheet_name    As String
+Dim Files_sheet_name     As String
+Dim objFso                  As New FileSystemObject
+Dim strstartfolder          As String
+Dim root_level              As String
+Dim g_level                 As Integer
+' Types
+'Private Type Summary
+'    strFolder   As String
+'    lngDuplicate    As Long
+'    LngFiles    As Long
+'    strLevel    As String
+'End Type
+Private Type DupFiles ' 128 bytes (+3)
+    'strFile     As String
+    lngSize     As Long
+    lngcount    As Long
+    infolders   As String 'folders concatenated using ;
+    'arrsummary()   As Summary
+End Type
+ 
+
+Private Type Folders
+    strlevel   As String    'number or X - exclude
+    lngDuplicate    As Long
+    lngfiles    As Long
+    'strstartfolder    As String
+    'strCopyTo   As String
+End Type
+
+Private Type Directory
+    strTopLevel   As String
+    strstartfolder    As String
+    'strCopyTo   As String
+End Type
+
+Private m_dctFolders As New Dictionary
+Private m_arrFolders() As Folders
+'Private m_arrSummary() As Summary 'array containing folder names for duplicate files
+'Private m_dctSummary As Dictionary
+Private m_arrDupFiles()    As DupFiles
+Private m_dctDupfiles As New Dictionary
+Private m_saveas As String
+Private m_folder_count As Long
+Private Sub class_initialize()
+
+comp_name = Environ("computername")
+
+End Sub
+Sub set_folder(Folder As String)
+Dim strfolder As String, strlevel As String, i As Long
+Dim Count As Long
+i = m_folder_count
+ReDim m_arrFolders(i + 1)
+
+strfolder = LCase(Folder) 'folder input parameter
+    i = i + 1
+    m_arrFolders(i).strlevel = 1 'seq for designating top level
+    If Not m_dctFolders.Exists(strfolder) Then
+        m_dctFolders.Add strfolder, i
+    Else
+        m_dctFolders.Item(strfolder) = i
+    End If
+m_folder_count = i
+End Sub
+Private Sub parse_folders()
+Dim i As Long
+Dim keyfolder As Variant
+Dim objfolder As Folder
+
+ReDim m_arrDupFiles(0)
+
+For Each keyfolder In m_dctFolders.Keys
+
+strstartfolder = LCase(keyfolder)
+
+Set objfolder = objFso.GetFolder(strstartfolder)
+g_level = 0
+i = m_dctFolders(strstartfolder)
+root_level = m_arrFolders(i).strlevel
+m_arrFolders(i).lngfiles = objfolder.Files.Count
+check_files objfolder, root_level & "_" & Format(g_level, "00")
+
+Next 'Folder_list
+Count_duplicate_files
+End Sub
+Private Sub check_files(objfolder, Level As String)
+Dim colfiles As Object
+Dim objfile As File
+Dim strname As String
+Dim strpath As String
+Dim d As Long, f As Long
+strpath = LCase(objfolder.Path)
+   f = m_dctFolders(strpath)
+   If m_arrFolders(f).strlevel <> "X" And _
+      Not (InStr(m_arrFolders(f).strlevel, "_") > 0) Then
+   
+       Set colfiles = objfolder.Files
+       
+       For Each objfile In colfiles
+           strname = objfile.Name & "?" & objfile.Size
+           d = UBound(m_arrDupFiles) + 1
+           If Not m_dctDupfiles.Exists(strname) Then
+               m_dctDupfiles.Add strname, d
+               ReDim Preserve m_arrDupFiles(d)
+           Else
+               d = m_dctDupfiles.Item(strname)
+           End If
+           ' add 1 to array size and redim
+           ' update array
+           'm_dctDupfiles(strname) = d
+           'm_arrDupFiles(d).strLevel = level  ' this is not correct. This should be done when writing the details
+           m_arrDupFiles(d).lngcount = m_arrDupFiles(d).lngcount + 1
+           m_arrDupFiles(d).infolders = m_arrDupFiles(d).infolders & ";" & strpath
+
+       Next
+    
+       ShowSubFolders objfolder
+   End If
+   m_arrFolders(f).strlevel = Level
+End Sub
+Private Sub ShowSubFolders(Folder)
+Dim subfolder As Object, objfolder As Scripting.Folder
+Dim strpath As String, f As Long
+g_level = g_level + 1
+If Not g_level < 1 Then
+   For Each subfolder In Folder.SubFolders
+
+       Set objfolder = objFso.GetFolder(subfolder.Path)
+       If objfolder.Attributes And 2 Or objfolder.Attributes And 4 Then    ' hidden files/folders
+       GoTo next_folder
+       End If
+       strpath = LCase(objfolder.Path)
+        If Not m_dctFolders.Exists(strpath) Then
+           f = UBound(m_arrFolders) + 1
+           ReDim Preserve m_arrFolders(f)
+           m_arrFolders(f).strlevel = " "
+           'm_arrFolders(f).strCopyTo = m_arrFolders(m_dctFolders(strstartfolder)).strCopyTo
+           m_arrFolders(f).lngfiles = objfolder.Files.Count
+            m_dctFolders.Add strpath, f
+        
+        End If
+
+       'check_files objfolder, folders.Item(Folder.Path) & "_" & g_level
+       check_files objfolder, root_level & "_" & Format(g_level, "00")
+       'ShowSubFolders Subfolder
+next_folder:
+   Next
+End If
+g_level = g_level - 1
+End Sub
+Public Sub list_files()
+Dim rstFiles As Recordset
+'-
+Dim strkey As Variant
+Dim strfilename As String
+Dim d As Long, j As Long, i As Long
+Dim arrpaths() As String, arrfiles() As String
+Dim strfilepath As String
+parse_folders
+
+If MsgBox("Delete records from Files table?", vbOKCancel) = vbOK Then
+    dbs.Execute "delete * from Files where Computer = '" & comp_name & "';"
+End If
+
+Set rstFiles = dbs.OpenRecordset("Files")
+rstFiles.Index = "PrimaryKey"
+j = 1
+For Each strkey In m_dctDupfiles.Keys
+    strfilename = strkey
+    'objdictionary.Item(strfilename) = objdictionary.Item(strfilename)
+    d = m_dctDupfiles(strkey)
+    arrpaths = Split(m_arrDupFiles(d).infolders, ";")
+    arrfiles = Split(strfilename, "?")
+    'If UBound(arrpaths) > 1 Then
+    For i = 1 To UBound(arrpaths)
+        strfilepath = arrpaths(i)
+        With rstFiles
+        .Seek "=", comp_name, strfilepath & "\", arrfiles(0)
+        If .NoMatch Then
+            .AddNew
+            !computer = comp_name
+            !Filename = arrfiles(0)
+            !Size = arrfiles(1)
+            !Count = UBound(arrpaths)
+            !Level = m_arrFolders(m_dctFolders(strfilepath)).strlevel
+            !Folder = strfilepath & "\"
+            !folder_hl = "Folder#" & strfilepath
+            '!Copy_to = m_arrFolders(m_dctFolders(strstartfolder)).strCopyTo
+            .update
+        End If
+        End With
+    Next i
+
+Next
+
+End Sub
+
+Public Sub music_files()
+Dim MUSICATTRIBS, fileext As String
+MUSICATTRIBS = ".m4a,.m4b,.mp3,.mp4,.wma,ytr.flc,.wav"
+'++++++++++
+Dim rstFiles As Recordset
+'-
+Dim strkey As Variant
+Dim strfilename As String
+Dim d As Long, j As Long, i As Long
+Dim arrpaths() As String, arrfiles() As String
+Dim strfilepath As String
+parse_folders
+If MsgBox("Delete records from wmusic_Files table?", vbOKCancel) = vbOK Then
+    CurrentDb.Execute "delete * from wmusic_Files ;"
+End If
+
+Set rstFiles = CurrentDb.OpenRecordset("wmusic_Files", dbOpenDynaset)
+
+j = 1
+For Each strkey In m_dctDupfiles.Keys
+    strfilename = strkey
+    'objdictionary.Item(strfilename) = objdictionary.Item(strfilename)
+    d = m_dctDupfiles(strkey)
+    arrpaths = Split(m_arrDupFiles(d).infolders, ";")
+    arrfiles = Split(strfilename, "?")
+    fileext = LCase(Right(arrfiles(0), 4))
+    If InStr(MUSICATTRIBS, fileext) > 0 Then
+    'If UBound(arrpaths) > 1 Then
+        For i = 1 To UBound(arrpaths)
+            strfilepath = arrpaths(i)
+            With rstFiles
+            .AddNew
+            '!computer = comp_name
+            !Path = strfilepath & "\" & arrfiles(0)
+            .update
+            End With
+        Next i
+    End If
+Next
+'++++++++++++
+
+
+End Sub
+
+Public Sub list_folders()
+Dim rstfolders As Recordset
+Dim strfolder As String
+Dim objfolder As Scripting.Folder
+Dim n As Long
+'-
+Dim key As Variant
+
+Set dbs = CurrentDb
+If MsgBox("Delete records from Folders table?", vbOKCancel) = vbOK Then
+    dbs.Execute "delete * from Folders where Computer = '" & comp_name & "';"
+End If
+
+
+Set rstfolders = dbs.OpenRecordset("Folders")
+rstfolders.Index = "PrimaryKey"
+
+For Each key In m_dctFolders.Keys
+n = n + 1
+strfolder = key
+' write summary sheet with folder name, duplicate files and total files
+Set objfolder = objFso.GetFolder(strfolder)
+With rstfolders
+    .Seek "=", comp_name, key & "\"
+    If .NoMatch Then
+        .AddNew
+        !computer = comp_name
+        !Folder = key & "\"
+        !folder_hl = "Folder#" & key
+        !Dups_count = m_arrFolders(m_dctFolders(key)).lngDuplicate
+        !Files_count = m_arrFolders(m_dctFolders(key)).lngfiles
+        !Level = m_arrFolders(m_dctFolders(key)).strlevel
+        .update
+    End If
+End With
+Next ' d_summary
+
+
+End Sub
+Private Sub Count_duplicate_files()
+Dim strkey As Variant
+Dim strfilename As String, strfilepath As String
+Dim d As Long, i As Long
+Dim arrpaths() As String, arrfiles() As String
+
+For Each strkey In m_dctDupfiles.Keys
+    strfilename = strkey
+        'objdictionary.Item(strfilename) = objdictionary.Item(strfilename)
+        d = m_dctDupfiles(strkey)
+        arrpaths = Split(m_arrDupFiles(d).infolders, ";")
+        arrfiles = Split(strfilename, "?")
+        If UBound(arrpaths) > 1 Then    'Duplicate file
+            For i = 1 To UBound(arrpaths)
+                strfilepath = arrpaths(i)
+                m_arrFolders(m_dctFolders(strfilepath)).lngDuplicate = m_arrFolders(m_dctFolders(strfilepath)).lngDuplicate + 1
+            Next
+
+
+        End If
+        'Debug.Print
+    'End If
+Next
+
+End Sub
+
+Private Sub class_terminate()
+
+Set m_dctFolders = Nothing
+Erase m_arrFolders
+Erase m_arrDupFiles
+Set m_dctDupfiles = Nothing
+End Sub
