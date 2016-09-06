@@ -15,17 +15,23 @@ Option Explicit
 Function create_objfileutil() As clsFileUtil
 Set create_objfileutil = New clsFileUtil
 End Function
+Sub add_folders(ByRef objfileutil As clsFileUtil, folders As Collection)
+Dim folder As Variant
+For Each folder In folders
+    objfileutil.add_folder (CStr(folder))
+Next
+End Sub
 Function Get_Files(ByRef objfileutil As clsFileUtil)
-objfile.list_files
-MsgBox "Files list has been generated"
+objfileutil.list_files
+msgbox "Files list has been generated"
 
 End Function
 Sub get_music_files(ByRef objfileutil As clsFileUtil)
 
-objfile.music_files
+objfileutil.music_files
 
 process_mediainfo "wMusic_files", "wMusic_files", False
-MsgBox "music Files list has been generated"
+msgbox "music Files list has been generated"
 
 
 End Sub
@@ -33,13 +39,13 @@ End Sub
 Sub process_mediainfo(strinobj As String, stroutobj As String, update As Boolean)
 Dim excelfile As String
 Dim fso As New FileSystemObject
-Dim Path As String
+Dim path As String
 
 Set db = CurrentDb
 ' prepare to call powershell script o get the mediainfo
 '
-Path = "c:\temp" 'Environ("temp")
-excelfile = Path & "\temp" & Format(Now(), "yyyymmddhhmmss") & ".xlsx"
+path = "c:\temp" 'Environ("temp")
+excelfile = path & "\temp" & Format(Now(), "yyyymmddhhmmss") & ".xlsx"
 'export the table to excel sheet
 DoCmd.TransferSpreadsheet acExport, acSpreadsheetTypeExcel12Xml, _
  strinobj, excelfile, True
@@ -54,39 +60,53 @@ fso.DeleteFile excelfile
 Set fso = Nothing
 
 End Sub
-Sub update_music_catalog()
-Dim qdf As QueryDef
-Set db = CurrentDb
 
-Set qdf = db.QueryDefs("upd_music_catalog")
-qdf.Execute
-qdf.Close
+'
+' Should be moved to main application
+'
+'Sub update_music_catalog()
+'Dim qdf As QueryDef
+'Set db = CurrentDb
+'
+'delete this query def from code library
+'Set qdf = db.QueryDefs("upd_music_catalog")
+'qdf.Execute
+'qdf.Close
 
-Set qdf = db.QueryDefs("app_music_catalog")
-qdf.Execute
+'Set qdf = db.QueryDefs("app_music_catalog")
+'qdf.Execute
 
-qdf.Close
+'qdf.Close
 
-db.Execute "delete * from wmusic_files"
-db.Close
+'db.Execute "delete * from wmusic_files"
+'db.Close
 
-End Sub
+'End Sub
 Private Sub getset_mediainfo(excelfile As String, worksheet As String, update As Boolean)
 Dim sh As Object
 Dim ps As String
 Dim cmd As String
+Dim fso As FileSystemObject
+
+Set fso = New FileSystemObject
 
 Set sh = CreateObject("wscript.Shell")
 
 ps = """" & sh.specialfolders("mydocuments") & "\windowspowershell\update-mediatagaccess.ps1"""
 
+If Not fso.FileExists(ps) Then
+    msgbox "powershell script missing" & vbCrLf & ps
+    Set fso = Nothing
+    Exit Sub
+End If
 cmd = "PowerShell.exe -noexit -ExecutionPolicy Bypass -file " & ps & _
               " -excelfile """ & excelfile & """ -worksheet " & worksheet '
 If update Then
     cmd = cmd & " -update"
 End If
 sh.Run cmd, , True
-
+Set fso = Nothing
+Set sh = Nothing
 End Sub
 
 Function analyse_folder(strfolder As String)
@@ -98,6 +118,7 @@ setup_parameter strfolder
 'DoCmd.OpenQuery "Analyse_folder", , acReadOnly
 DoCmd.OpenForm "analyse_folder", acNormal, , , acFormReadOnly, acDialog
 'DoCmd.Requery
+db.Close
 End Function
 Function delete_files()
 '
@@ -131,13 +152,13 @@ With rst
 If .RecordCount > 0 Then
     .MoveFirst
     Do While Not .EOF
-    filespec = !Folder & !Filename
-    If !Analyse = filedeleteflag Then
+    filespec = !folder & !filename
+    If !analyse = filedeleteflag Then
         'Debug.Print "File will be deleted - "; filespec
         fso.DeleteFile filespec
         db.Execute ("delete from files where " & _
-        "folder = """ & !Folder & """ and  " & _
-        "filename = """ & !Filename & """;")
+        "folder = """ & !folder & """ and  " & _
+        "filename = """ & !filename & """;")
         
     End If
     .MoveNext
@@ -158,7 +179,7 @@ Function del_folder_from_filesystem(strfolder As String)
 '
 Dim msg As String
 msg = "Are you sure, you want to delete the selected folder and all subfolders?"
-If MsgBox(msg, vbYesNo + vbQuestion) = vbYes Then
+If msgbox(msg, vbYesNo + vbQuestion) = vbYes Then
     Remove_folder strfolder:=strfolder, delete_from_filesystem:=True
 End If
 End Function
@@ -185,20 +206,20 @@ If rstfolders.RecordCount > 0 Then
         Do While Not rstfolders.EOF
         With rstfolders
             If !Files_count > 0 Then
-                setup_parameter (!Folder)
+                setup_parameter (!folder)
                 Adjust_filecount delete_flag
-                db.Execute "delete from files where folder = """ & !Folder & """"
+                db.Execute "delete from files where folder = """ & !folder & """"
             End If
-            db.Execute "delete from folders where folder = """ & !Folder & """"
+            db.Execute "delete from folders where folder = """ & !folder & """"
             .MoveNext
     
         End With
         Loop
         If delete_from_filesystem Then
             fso.DeleteFolder strfolder
-            MsgBox strfolder & " has been successfully deleted from the filesystem"
+            msgbox strfolder & " has been successfully deleted from the filesystem"
         End If
-        MsgBox strfolder & " has been successfully removed from the database"
+        msgbox strfolder & " has been successfully removed from the database"
     End If
 End If
 update_folder_counts
@@ -232,7 +253,7 @@ Do While Not rst.EOF
 With rst
     Set rkeep = db.OpenRecordset( _
     "select count(*) as ckeep from analyse_folder as a where " & _
-    "a.filename = """ & !Filename & """ and " & _
+    "a.filename = """ & !filename & """ and " & _
     "a.size     = " & !Size & " and " & _
     "a.analyse <> """ & delete_flag & """")
     
@@ -255,14 +276,14 @@ Dim rs As Recordset
 Set rs = db.OpenRecordset( _
 "select filename,folder,count,size  " & _
 "from analyse_folder where " & _
-"filename = """ & rst!Filename & """ " & _
+"filename = """ & rst!filename & """ " & _
 "and size = " & rst!Size & " " & _
 "and analyse <> """ & delete_flag & """")
 With rs
     Do While Not .EOF
      db.Execute "update files set count = " & Count & _
-    " where folder = """ & !Folder & """ " & _
-    " and filename = """ & !Filename & """ " & _
+    " where folder = """ & !folder & """ " & _
+    " and filename = """ & !filename & """ " & _
     " and size = " & !Size
     'Debug.Print "Update_filecount", !folder & "-" & !FileName & "-"; !Size, "-", count
     .MoveNext
@@ -294,31 +315,17 @@ Set get_folder_list = qdf.OpenRecordset
 qdf.Close
 
 End Function
-Private Function get_folder_name() As String
-Dim strtable As String
-
-strtable = Application.Screen.ActiveDatasheet.Name
-On Error GoTo error_msg
-get_folder_name = Trim(Application.Screen.ActiveDatasheet.Controls("Folder"))
-On Error GoTo 0
-
-Exit Function
-
-error_msg:
-MsgBox "Error-could not get folder name"
-get_folder_name = Space(1)
-End Function
 Private Function ok_to_proceed(rstfolders As Recordset, delete_from_filesystem As Boolean) As Boolean
 Dim msg As String
 ok_to_proceed = True
 If delete_from_filesystem Then
     rstfolders.MoveLast
     If rstfolders!cum_files <> rstfolders!cum_dups Then
-        msg = rstfolders!Folder & vbCrLf & " Files = " & rstfolders!cum_files & _
+        msg = rstfolders!folder & vbCrLf & " Files = " & rstfolders!cum_files & _
               vbCrLf & " Duplicates = " & rstfolders!cum_dups & _
               vbCrLf & "Are sure to delete this folder from file system?"
               
-        ok_to_proceed = (MsgBox(msg, vbYesNo) = vbYes)
+        ok_to_proceed = (msgbox(msg, vbYesNo) = vbYes)
         
   
     End If
@@ -326,17 +333,6 @@ If delete_from_filesystem Then
 End If
 
 End Function
-Function get_config(p_key As String) As String
-
-get_config = Trim(DLookup("Keyvalue", "Configuration", "key=""" & p_key & """"))
-
-End Function
-Sub set_config(p_key As String, p_value As String)
-Set db = CurrentDb
-db.Execute "update configuration set " & p_key & _
-    " = """ & Trim(p_value) & """"
-
-End Sub
 
 Private Function create_query() As QueryDef
 Dim orderby As String
@@ -348,20 +344,6 @@ Set qdf = db.CreateQueryDef("", _
     "analyse_folder.Count " & _
     "HAVING analyse_folder.Count>1;")
 
-
-'If delete_flag = "A" Then orderby = "" Else orderby = "DESC"
-'   Set qdf = db.CreateQueryDef("", _
-'      "PARAMETERS prmfolder TEXT; " & _
-'    "SELECT Files.Filename, Files.Size, Files.Folder, Files.Count, Files.Level, " & _
-'    "Files.folder_hl, IIf([Files]![Folder]=[PrmFolder],'A','B') AS analyse " & _
-'    "FROM Files INNER JOIN Files AS Files_1 " & _
-'    "ON (Files_1.Size = Files.Size) AND (Files.Filename = Files_1.Filename) " & _
-'    "where (files_1.folder = [prmfolder]) " & _
-'    "order by Files.Filename, Files.Size, " & _
-'    "IIf([Files]![Folder]=[PrmFolder],'A','B') " & orderby & ";")
-
-' "Select folder, Files_count, Dups_count from folders where folder like [prmfolder]" & _
-'     " order by folder desc")
 
 Set create_query = qdf
 
@@ -395,7 +377,7 @@ Do While Not .EOF
     If !Count > 1 Then
         dcount = !Files_count
     End If
-    count_files !Folder, !Folder, fcount, dcount, 0
+    count_files !folder, !folder, fcount, dcount, 0
     .MoveNext
 Loop
 End With
@@ -408,7 +390,7 @@ With rstf
 .MoveFirst
     Do While Not .EOF
     .Edit
-    strfolder = !Folder
+    strfolder = !folder
     !Files_count = arr(dct(strfolder)).lngfiles
     !Dups_count = arr(dct(strfolder)).lngdups
     !Files_total = arr(dct(strfolder)).lngftotal
@@ -421,7 +403,7 @@ End With
 rstf.Close
 Set dct = Nothing
 End Function
-Private Sub count_files(Folder As String, parent As String, fcount As Long, dcount As Long, cntfolder)
+Private Sub count_files(folder As String, parent As String, fcount As Long, dcount As Long, cntfolder)
 Dim arridx As Long
 Dim pfolder As String
 If Len(parent) <= 1 Or InStr(parent, "\") = 0 Then Exit Sub
@@ -429,13 +411,13 @@ If Not dct.Exists(parent) Then
     arridx = UBound(arr) + 1
     ReDim Preserve arr(arridx)
     dct.Add parent, arridx
-    If Folder = parent Then
+    If folder = parent Then
         cntfolder = 1
     End If
 Else
     arridx = dct(parent)
 End If
-If Folder = parent Then
+If folder = parent Then
     arr(arridx).lngfiles = arr(arridx).lngfiles + fcount
     arr(arridx).lngdups = arr(arridx).lngdups + dcount
 Else
@@ -445,12 +427,8 @@ End If
     arr(arridx).lngdtotal = arr(arridx).lngdtotal + dcount
 
 pfolder = Left(parent, InStrRev(parent, "\", Len(parent) - 1))
-count_files Folder, pfolder, fcount, dcount, cntfolder
+count_files folder, pfolder, fcount, dcount, cntfolder
 End Sub
-Function get_computername() As String
-
-get_computername = Environ("computername")
-End Function
 Function pick_files_Folder(Title As String, _
         Dialogtype As MsoFileDialogType, _
         Optional InitialFolder As String = vbNullString, _

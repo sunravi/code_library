@@ -1,0 +1,16 @@
+Option Compare Database
+Option Explicit
+
+Function create_objfileutil() As clsFileUtil
+Set create_objfileutil = New clsFileUtil
+End Function
+Function create_objTrans() As clsTrans
+Set create_objTrans = New clsTrans
+End Function
+
+Function git_decompose()
+decompose
+End Function
+Function git_merge()
+merge
+End Function

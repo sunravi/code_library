@@ -1,0 +1,119 @@
+Option Compare Database
+Option Explicit
+Private Const ForReading      As Long = 1
+Public Enum ForWriteEnum
+   ForWriting = 2
+   ForAppending = 8
+End Enum
+Dim fso As New FileSystemObject
+Public Enum TristateEnum
+   TristateTrue = -1        'Opens the file as Unicode
+   TristateFalse = 0        'Opens the file as ASCII
+   TristateUseDefault = -2  'Use default system setting
+End Enum
+Sub create_folders_recurse(sfolder As String, Optional folderexists As Boolean)
+Dim chkfolder As String
+Dim pos As Long
+If Right(sfolder, 1) = "\" Then
+    sfolder = Left(sfolder, Len(sfolder) - 1)
+End If
+
+If fso.folderexists(sfolder) Then Exit Sub
+pos = InStrRev(sfolder, "\")
+chkfolder = Left(sfolder, pos - 1)
+'  recursive call
+create_folders_recurse (chkfolder)
+fso.CreateFolder (sfolder)
+
+End Sub
+Public Function Read_FSO( _
+   ByVal sFileName As String, _
+   Optional ByVal TriState As TristateEnum = TristateTrue) As String
+'
+' Read text file as text stream
+'
+   
+   Dim objFSO           As Object
+   Dim objStream        As Object
+
+   Set objFSO = CreateObject("Scripting.FileSystemObject")
+   If (Not objFSO Is Nothing) Then
+      Set objStream = objFSO.OpenTextFile( _
+         sFileName, ForReading, False, TriState)
+      If (Not objStream Is Nothing) Then
+         With objStream
+            Read_FSO = .ReadAll
+            .Close
+         End With
+         Set objStream = Nothing
+      End If
+      Set objFSO = Nothing
+   End If
+End Function
+
+Function pickFile() As Variant
+    'Declare a variable as a FileDialog object
+    'and create a FileDialog object as a File Picker dialog box
+    Dim fd As Office.FileDialog
+    Dim folder As String
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+
+    'Declare a variable to contain the path of each selected item
+    'Even though the path is a String, the variable must be a Variant
+    'Because For Each...Next routines only work with Variants and Objects
+    Dim Item As Variant
+        folder = Environ$("USERPROFILE") & "\Music\Music Notation\*.txt"
+    
+        'Use the Show method to display the File Picker dialog box
+        'The user pressed the action button
+        With fd
+        .AllowMultiSelect = False
+        .InitialFileName = folder
+        If .Show = -1 Then
+        
+            For Each Item In .selecteditems
+                ' Item contains  path of each selected item
+                'You can use any file I/O functions you want on the path
+                'This example displays file path
+                pickFile = Item
+                Exit For
+            Next Item
+            
+        End If
+        
+        End With
+    'Set object variable to Nothing
+    Set fd = Nothing
+End Function
+
+Function get_computername() As String
+
+get_computername = Environ("computername")
+End Function
+
+Function get_config(p_key As String) As String
+
+get_config = Trim(DLookup("Keyvalue", "Configuration", "key=""" & p_key & """"))
+
+End Function
+Sub set_config(p_key As String, p_value As String)
+
+CurrentDb.Execute "update configuration set " & p_key & _
+    " = """ & Trim(p_value) & """"
+
+End Sub
+Function relinktables() As Boolean
+Dim connectstring As String
+Dim tdf As TableDef
+connectstring = ";database=" & CurrentProject.FullName
+connectstring = Replace(connectstring, ".accdb", "_be.accdb")
+connectstring = Replace(connectstring, ".accde", "_be.accde")
+For Each tdf In CurrentDb.TableDefs
+    If Len(tdf.Connect) > 0 Then
+        'It's a linked table, so re-link:
+        tdf.Connect = connectstring
+        tdf.RefreshLink
+    End If
+Next tdf
+
+End Function
