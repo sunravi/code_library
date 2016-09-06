@@ -1,0 +1,296 @@
+' Usage:
+'  cscript decompose.vbs <input file> <path>
+
+' Converts all modules, classes, forms and macros from an Access Project file (.adp) <input file> to
+' text and saves the results in separate files to <path>.  Requires Microsoft Access.
+' prerequisites
+' 1. database should have table version
+' 2. should have a record with version set as "new"
+' 3. subfolder gitrepo should exist
+Option Explicit
+Option Compare Database
+Const acForm = 2
+Const acModule = 5
+Const acMacro = 4
+Const acReport = 3
+Const acQuery = 1
+Const acExportTable = 0
+Dim fso As New FileSystemObject
+
+Sub decompose()
+Dim myobj As Object
+
+' BEGIN CODE
+For Each myobj In Application.CurrentProject.AllModules
+    'Wscript.Echo "Exporting MODULE " & myObj.FullName
+    DoCmd.Save acModule, myobj.FullName
+Next
+
+Dim reldoc As Object, ACCDBFilename, sexportpath As String
+'Set fso = CreateObject("Scripting.FileSystemObject")
+Set reldoc = CreateObject("Microsoft.XMLDOM")
+
+'If (Wscript.Arguments.Count = 0) Then
+'    msgbox "Please provide the .accdb database file", vbExclamation, "Error"
+'    Wscript.Quit()
+'End If
+'ACCDBFilename = fso.GetAbsolutePathName(Wscript.Arguments(0))
+
+'If (Wscript.Arguments.Count = 1) Then
+' sExportpath = ""
+'Else
+' sExportpath = Wscript.Arguments(1)
+'End If
+
+
+exportModulesTxt
+
+If (Err <> 0) And (Err.Description <> Null) Then
+    msgbox Err.Description, vbExclamation, "Error"
+    Err.Clear
+End If
+
+End Sub
+Function exportModulesTxt()
+    Dim dbname As String, reldoc As Object
+    Dim sexportpath As String
+    Dim myComponent, sModuleType, sTempname, sOutstring
+    Dim myType, myName As String, myPath As String, hasRelations
+    Dim smaster As String
+    Dim excelfile As String
+    Dim ver As String
+    Dim folder
+    '
+    '   get folder names for git repositories
+    '
+    git_folder_names smaster, sexportpath
+    '
+    '   create Git repository folders
+    '
+    create_folders_recurse (sexportpath)
+    fso.DeleteFolder (sexportpath)              ' clear Git repo folder contents
+    fso.CreateFolder (sexportpath)              ' create fresh empty folder
+    On Error GoTo 0
+
+
+    'Wscript.Echo "exporting..."
+    Dim myobj As Object
+    Set reldoc = CreateObject("Microsoft.XMLDOM")
+    For Each myobj In Application.CurrentProject.AllForms
+        'Wscript.Echo "Exporting FORM " & myObj.FullName
+        Application.SaveAsText acForm, myobj.FullName, sexportpath & "\" & myobj.FullName & ".form.txt"
+        Application.DoCmd.Close acForm, myobj.FullName
+    Next
+    For Each myobj In Application.CurrentProject.AllModules
+        'Wscript.Echo "Exporting MODULE " & myObj.FullName
+        Application.SaveAsText acModule, myobj.FullName, sexportpath & "\" & myobj.FullName & ".module.txt"
+    Next
+    For Each myobj In Application.CurrentProject.AllMacros
+        'Wscript.Echo "Exporting MACRO " & myObj.FullName
+        Application.SaveAsText acMacro, myobj.FullName, sexportpath & "\" & myobj.FullName & ".macro.txt"
+    Next
+    For Each myobj In Application.CurrentProject.AllReports
+        'Wscript.Echo "Exporting REPORT " & myObj.FullName
+        Application.SaveAsText acReport, myobj.FullName, sexportpath & "\" & myobj.FullName & ".report.txt"
+    Next
+    For Each myobj In Application.CurrentDb.QueryDefs
+        'Wscript.Echo "Exporting QUERY " & myObj.Name
+        Application.SaveAsText acQuery, myobj.Name, sexportpath & "\" & myobj.Name & ".query.txt"
+    Next
+    For Each myobj In Application.CurrentDb.TableDefs
+     If Not Left(myobj.Name, 4) = "MSys" Then
+      'Wscript.Echo "Exporting TABLE " & myObj.Name
+      Application.ExportXml acExportTable, myobj.Name, , sexportpath & "\" & myobj.Name & ".table.txt"
+      'put the file path as a second parameter if you want to export the table data as well, instead of ommiting it and passing it into a third parameter for structure only
+     End If
+    Next
+
+    hasRelations = False
+    reldoc.appendChild reldoc.createElement("Relations")
+    For Each myobj In Application.CurrentDb.Relations  'loop though all the relations
+    If Not Left(myobj.Name, 4) = "MSys" Then
+     Dim relName As Object, relAttrib As Object, relTable As Object, relFoTable As Object, fld
+     hasRelations = True
+
+     reldoc.ChildNodes(0).appendChild reldoc.createElement("Relation")
+     Set relName = reldoc.createElement("Name")
+     relName.Text = myobj.Name
+     reldoc.ChildNodes(0).LastChild.appendChild relName
+
+     Set relAttrib = reldoc.createElement("Attributes")
+     relAttrib.Text = myobj.Attributes
+     reldoc.ChildNodes(0).LastChild.appendChild relAttrib
+
+     Set relTable = reldoc.createElement("Table")
+     relTable.Text = myobj.Table
+     reldoc.ChildNodes(0).LastChild.appendChild relTable
+
+     Set relFoTable = reldoc.createElement("ForeignTable")
+     relFoTable.Text = myobj.ForeignTable
+     reldoc.ChildNodes(0).LastChild.appendChild relFoTable
+
+     'Wscript.Echo "Exporting relation " & myObj.Name & " between tables " & myObj.Table & " -> " & myObj.ForeignTable
+
+     For Each fld In myobj.Fields   'in case the relationship works with more fields
+      Dim lf, ff
+      reldoc.ChildNodes(0).LastChild.appendChild reldoc.createElement("Field")
+
+      Set lf = reldoc.createElement("Name")
+      lf.Text = fld.Name
+      reldoc.ChildNodes(0).LastChild.LastChild.appendChild lf
+
+      Set ff = reldoc.createElement("ForeignName")
+      ff.Text = fld.ForeignName
+      reldoc.ChildNodes(0).LastChild.LastChild.appendChild ff
+
+      'Wscript.Echo "  Involving fields " & fld.Name & " -> " & fld.ForeignName
+     Next
+    End If
+    Next
+    If hasRelations Then
+     reldoc.InsertBefore reldoc.createProcessingInstruction("xml", "version='1.0'"), reldoc.ChildNodes(0)
+     reldoc.Save sexportpath & "\relations.rel.txt"
+     'Wscript.Echo "Relations successfuly saved in file relations.rel.txt"
+    End If
+
+    'Application.CloseCurrentDatabase
+    'Application.Quit
+
+' create master folder and copy from version decompose if it does not exist
+    If Not fso.folderexists(smaster) Then
+        Set folder = fso.CreateFolder(smaster)
+
+        fso.CopyFile sexportpath & "\*.*", smaster & "\"
+    End If
+
+
+'   compare with master
+'  generate temp xl sheet file name and pass as parameter in the below call
+'   change compare folders powersheel to export the compare info to this excel ssheet
+    excelfile = get_tempfile()
+    compare_ver smaster, sexportpath, excelfile
+'   After the compare operation is completed read the excel sheet and    delete where sideindicator = '=='
+    delete_unchanged excelfile, smaster, sexportpath, ver
+End Function
+Function get_tempfile() As String
+Dim path As String
+path = "c:\temp" 'Environ("temp")
+get_tempfile = path & "\temp" & Format(Now(), "yyyymmddhhmmss") & ".xlsx"
+
+End Function
+Sub delete_unchanged(excelfile As String, smaster As String, sexportpath As String, ver As String)
+    Dim rng As excel.Range
+    Dim xlApp As excel.Application
+    Dim xlBook As excel.Workbook
+    Dim xlSheet As excel.worksheet
+    Dim rw As excel.Range
+    Dim i As Long
+    Dim del_folder As String
+    
+  
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Workbooks.Open filename:=excelfile
+    Set xlSheet = xlApp.ActiveSheet
+    Set rng = xlSheet.UsedRange
+    'gparacnt = 0
+    For Each rw In rng.Rows
+    
+    If rw.Row = 1 Then GoTo next_row
+    If rw.Cells(1, 2).Value2 = "==" Then
+        fso.DeleteFile (sexportpath & "\" & rw.Cells(1, 1).Value2)
+    ElseIf rw.Cells(1, 2).Value2 = "<=" Then 'deletefile        nothing to do
+        del_folder = sexportpath & "\_delete\"
+        If Not fso.folderexists(del_folder) Then
+            fso.CreateFolder (del_folder)
+        End If
+        fso.CopyFile smaster & "\" & rw.Cells(1, 1).Value2, del_folder
+    End If
+    ' when git merge happens the version should be merged with master
+next_row:
+    Next
+    xlApp.Workbooks.Close
+    xlApp.Quit
+End Sub
+
+Sub compare_ver(master As String, vers As String, excelfile As String)
+Dim sh As Object
+Dim ps As String
+Dim cmd As String
+
+
+Set sh = CreateObject("wscript.Shell")
+
+ps = """" & sh.specialfolders("mydocuments") & "\windowspowershell\compare-folders.ps1"""
+
+cmd = "PowerShell.exe -ExecutionPolicy Bypass -noexit -file " & ps & _
+              " -master """ & master & """  -pull """ & vers & """ -excelfile """ & excelfile & """"
+ 
+sh.Run cmd, , True
+
+End Sub
+Sub git_folder_names(smaster As String, sexportpath As String)
+    '
+    '   commono routine to get folder names
+    '   used in decompose  and merge
+    '
+    Dim dbname As String
+    Dim myType As String, myName As String, myPath As String, hasRelations
+    Dim excelfile As String
+    Dim ver As String
+    Dim folder
+    'Set oApplication = CreateObject("Access.Application")
+    dbname = Application.CurrentProject.FullName
+    myType = fso.GetExtensionName(dbname)
+    myName = fso.GetBaseName(dbname)
+    myPath = Application.CurrentProject.path
+'
+'
+    ver = DLookup("[version]", myName, "[Status] = '" & "new" & "'")
+    If isnull(ver) Then
+        msgbox "Error - Version not set in version table "
+        Exit Sub
+    Else
+        smaster = myPath & "\gitrepo\" & myName & "\master"
+        sexportpath = myPath & "\gitrepo\" & myName & "\" & ver
+    End If
+   
+    On Error GoTo 0
+
+End Sub
+Sub merge()
+Dim ofolder As folder
+Dim smaster As String, sversion As String
+Dim ofile As File
+Dim db As Database
+Dim dbname As String
+'
+'   This routine should be called after the git pull/merge is complete
+'       First call decompose before merging
+'   1.  copy the files from version to master
+'   2.  Delete the files in \version\_delete folder
+'   3.  delete \<version> folder
+'   4.  update version table and close the current version
+'
+
+git_folder_names smaster, sversion      'get folder names
+If Not fso.folderexists(sversion) Then
+    msgbox " ***ERROR *** version folder does not exist" & sversion
+    Exit Sub
+End If
+
+fso.CopyFile sversion & "\*.*", smaster & "\"       'copy the files from version to master
+Set ofolder = fso.GetFolder(sversion & "\_delete")
+For Each ofile In ofolder.Files
+    fso.DeleteFile (smaster & "\" & ofile.Name)          ' delete files from master
+Next
+
+fso.DeleteFolder (sversion)                         ' Delete version folder
+'
+'   update version table
+'
+dbname = fso.GetBaseName(Application.CurrentProject.FullName)
+Set db = CurrentDb
+db.Execute ("update [" & dbname & "] set status = 'done' " & _
+            "where status = 'new' ")
+
+End Sub
