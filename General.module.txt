@@ -93,12 +93,12 @@ End Function
 
 Function get_config(p_key As String) As String
 
-get_config = Trim(DLookup("Keyvalue", "Configuration", "key=""" & p_key & """"))
+get_config = Trim(DLookup("Key_value", "Config", "key=""" & p_key & """"))
 
 End Function
 Sub set_config(p_key As String, p_value As String)
 
-CurrentDb.Execute "update configuration set " & p_key & _
+CurrentDb.Execute "update config set " & p_key & _
     " = """ & Trim(p_value) & """"
 
 End Sub
@@ -116,4 +116,14 @@ For Each tdf In CurrentDb.TableDefs
     End If
 Next tdf
 
+End Function
+Public Function clean(mystr As String) As String
+Dim counter As Integer
+clean = ""
+
+For counter = 1 To Len(mystr)
+If Asc(Mid(mystr, counter, 1)) > 31 And Asc(Mid(mystr, counter, 1)) <= 235 Then
+    clean = clean & Mid(mystr, counter, 1)
+End If
+Next counter
 End Function

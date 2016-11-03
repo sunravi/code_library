@@ -279,10 +279,12 @@ If Not fso.folderexists(sversion) Then
 End If
 
 fso.CopyFile sversion & "\*.*", smaster & "\"       'copy the files from version to master
-Set ofolder = fso.GetFolder(sversion & "\_delete")
-For Each ofile In ofolder.Files
-    fso.DeleteFile (smaster & "\" & ofile.Name)          ' delete files from master
-Next
+If fso.folderexists(sversion & "\_delete") Then
+    Set ofolder = fso.GetFolder(sversion & "\_delete")
+    For Each ofile In ofolder.Files
+        fso.DeleteFile (smaster & "\" & ofile.Name)          ' delete files from master
+    Next
+End If
 
 fso.DeleteFolder (sversion)                         ' Delete version folder
 '
